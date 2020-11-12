@@ -1,9 +1,13 @@
-import requests
+import requests, os, base64, smtplib, ssl, json
+from pathlib import Path
 from glob import glob
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
 from time import sleep
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 
 # http://www.networkinghowtos.com/howto/common-user-agent-list/
 HEADERS = ({'User-Agent':
@@ -97,14 +101,45 @@ def search_product_list(interval_count = 1, interval_hours = 6):
             try:
                 # This is where you can integrate an email alert!
                 if price < prod_tracker.buy_below[x]:
-                    print('************************ ALERT! Buy the '+prod_tracker.code[x]+' ************************')
+                    print('************************ ALERT! Buy the product '+prod_tracker.code[x]+'! ************************')
+                    credentials_path = Path('./credentials_gmail.json')
+                    with credentials_path.open() as f:
+                        credentials = json.load(f)
+                    username = credentials["sender_gmail"]
+                    password = credentials["sender_password"]
+                    receiver = credentials["receiver_gmail"]
+                    context = ssl.create_default_context()
+                    message = MIMEMultipart()
+                    message['From'] = username
+                    message['to'] = receiver
+                    message['Subject'] = "Amazon product " + str(prod_tracker.code[x]) + " is below target price!"
+                    text = "The item you are tracking has gone below the price of " + str(prod_tracker.buy_below[x]) + "€.\n\
+It now is at " + str(price) + "€! \n\
+Quick! In order to buy click this link:\n\t" + str(prod_tracker.url[x]) 
+                    text = MIMEText(text, "plain")
+                    message.attach(text)
+
+                    try:
+                        server = smtplib.SMTP('smtp.gmail.com', 587)
+                        server.ehlo() # Can be omitted
+                        server.starttls(context=context) # Secure the connection
+                        server.ehlo() # Can be omitted
+                        server.login(username, password)
+                        server.sendmail(username, receiver, message.as_string())
+                        print('sent email.....')
+                    except Exception as e:
+                        # Print any error messages to stdout
+                        print(e)
+                    finally:
+                        server.quit()
+
             
             except:
                 # sometimes we don't get any price, so there will be an error in the if condition above
                 pass
 
             tracker_log = tracker_log.append(log)
-            print('appended '+ prod_tracker.code[x] +'\n' + title + '\n\n')            
+            print('appended '+ prod_tracker.code[x] +'\n' + title + '\n')            
             sleep(5)
         
         interval += 1# counter update
@@ -113,11 +148,17 @@ def search_product_list(interval_count = 1, interval_hours = 6):
         print('end of interval '+ str(interval))
     
     # after the run, checks last search history record, and appends this run results to it, saving a new file
-    last_search = glob('C:/Users/Fábio/Documents/Python Projects/202005 Amazon Webscraper/search_history/*.xlsx')[-1] # path to file in the folder
-    search_hist = pd.read_excel(last_search)
-    final_df = search_hist.append(tracker_log, sort=False)
+    df = pd.read_csv("search_history/SEARCH_HISTORY.csv")
+    df = pd.concat([df,tracker_log], axis=0)
+    df.sort_values(by="code", inplace=True)
+    df.to_csv("search_history/SEARCH_HISTORY.csv", index=False)
+
+    # last_search = glob(os.getcwd().replace("\\","/")+'/search_history/*.xlsx')[-1] # path to file in the folder
+    # search_hist = pd.read_excel(last_search)
+    # final_df = search_hist.append(tracker_log, sort=False)
     
-    final_df.to_excel('search_history/SEARCH_HISTORY_{}.xlsx'.format(now), index=False)
+    # final_df.to_excel('search_history/SEARCH_HISTORY_{}.xlsx'.format(now), index=False)
     print('end of search')
 
-search_product_list()
+if __name__ == "__main__":
+    search_product_list()
